@@ -13,337 +13,207 @@ openapi: 3.0.3
 #   * errors are application/problem+json (RFC 9457)
 # ---------------------------------------------------------------------------
 info:
-  title: Replicated Key-Value Store
-  version: 2.0.0
+  title: Game Leaderboard
+  version: 1.0.0
   description: |
-    Client-facing RESTful API of the replicated key-value store.
-
-    * Reads accept `?consistency=sequential|linearizable` (default: sequential).
-      All writes are linearizable.
-    * Every entry has a `version`; `GET /v1/keys/{key}` returns it as the
-      `ETag`. Send it back in `If-Match` to write only if nothing changed in
-      between (412 otherwise).
-    * **POST** sets values. **PATCH** modifies them with a read-modify-write
-      operation (`append` or `increment`).
+    One game's leaderboard: unique player IDs, names and non-negative scores.
+    New players start at zero.
+    Reads choose sequential or linearizable consistency.
+    All writes are linearizable.
 servers:
   - url: /
-    description: The server that serves this page (use with /docs)
-  - url: http://localhost:8080
-    description: Node n1 (from Swagger Editor/UI containers; needs -cors-origin)
+    description: Current node
 tags:
-  - name: keys
-    description: Several keys at once (atomic)
-  - name: key
-    description: One key
-
+  - name: leaderboard
+    description: Read several players, increment scores atomically, or clear the leaderboard
+  - name: player
+    description: Create, read, increment the score of, or delete one player
 paths:
-  /v1/keys:
+  /v1/players:
     get:
-      tags: [keys]
-      operationId: getKeys
-      summary: Read several keys, sorted
+      tags: [leaderboard]
+      operationId: listPlayers
+      summary: Read selected players or the whole leaderboard
       description: |
-        Select keys with at most one of `key` (repeatable), `prefix`, or
-        `from`/`to` (range [from, to)). No selector = all keys.
-        Missing keys are skipped.
+        Omit id for all players, or repeat id to select players. Unknown IDs are
+        skipped. Duplicates appear once. Sort by score descending, breaking ties
+        by ID ascending. Apply limit after sorting.
       parameters:
-        - name: key
+        - name: id
           in: query
-          required: false
-          description: Repeat for several keys (?key=a&key=b)
-          schema:
-            type: array
-            items: { type: string }
+          description: Repeat for several IDs
           style: form
           explode: true
-        - name: prefix
-          in: query
-          required: false
-          schema: { type: string }
-        - name: from
-          in: query
-          required: false
-          schema: { type: string }
-        - name: to
-          in: query
-          required: false
-          schema: { type: string }
-        - $ref: '#/components/parameters/Sort'
+          schema: { type: array, minItems: 1, items: { type: string, minLength: 1 } }
         - name: limit
           in: query
-          required: false
-          description: Maximum number of entries (0 or absent = no limit)
+          description: Maximum results. Zero or absent means unlimited
           schema: { type: integer, format: int32, minimum: 0 }
-        - name: keysOnly
-          in: query
-          required: false
-          description: Return only the keys (values empty)
-          schema: { type: boolean, default: false }
         - $ref: '#/components/parameters/Consistency'
       responses:
         '200':
-          description: The entries, in sort order
+          description: Players in leaderboard order
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/EntryList' }
+              schema: { $ref: '#/components/schemas/PlayerList' }
         '400': { $ref: '#/components/responses/Problem' }
+        default: { $ref: '#/components/responses/Problem' }
     post:
-      tags: [keys]
-      operationId: setKeys
-      summary: Set several keys atomically
-      description: All or nothing. 412 if any `ifVersion` differs.
+      tags: [player]
+      operationId: createPlayer
+      summary: Join with a new player and score zero
+      description: Names do not need to be unique. An existing ID returns 409.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/SetKeysBody' }
+            schema: { $ref: '#/components/schemas/NewPlayer' }
       responses:
-        '200':
-          description: The entries after the write, in request order
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/EntryList' }
-        '400': { $ref: '#/components/responses/Problem' }
-        '412': { $ref: '#/components/responses/Problem' }
-    patch:
-      tags: [keys]
-      operationId: modifyKeys
-      summary: Append to or increment several keys atomically (read-modify-write)
-      description: All or nothing. 412 if any `ifVersion` differs.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/ModifyKeysBody' }
-      responses:
-        '200':
-          description: The entries after the operation, in request order
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/EntryList' }
-        '400': { $ref: '#/components/responses/Problem' }
-        '412': { $ref: '#/components/responses/Problem' }
-    delete:
-      tags: [keys]
-      operationId: deleteKeys
-      summary: Delete several keys atomically
-      parameters:
-        - name: key
-          in: query
-          required: true
-          description: Repeat for several keys (?key=a&key=b)
-          schema:
-            type: array
-            items: { type: string }
-            minItems: 1
-          style: form
-          explode: true
-      responses:
-        '200':
-          description: How many of the keys existed
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/DeleteResult' }
-        '400': { $ref: '#/components/responses/Problem' }
-
-  /v1/keys/{key}:
-    parameters:
-      - $ref: '#/components/parameters/Key'
-    get:
-      tags: [key]
-      operationId: getKey
-      summary: Read one key
-      parameters:
-        - $ref: '#/components/parameters/Consistency'
-      responses:
-        '200':
-          description: The entry
-          headers:
-            ETag: { $ref: '#/components/headers/ETag' }
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Entry' }
-        '404': { $ref: '#/components/responses/Problem' }
-    post:
-      tags: [key]
-      operationId: setKey
-      summary: Set one key (create or replace)
-      parameters:
-        - $ref: '#/components/parameters/IfMatch'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/SetBody' }
-      responses:
-        '200':
-          description: Replaced; the entry after the write
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Entry' }
         '201':
-          description: Created; the new entry
+          description: Created player
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Entry' }
+              schema: { $ref: '#/components/schemas/Player' }
         '400': { $ref: '#/components/responses/Problem' }
-        '412': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+        default: { $ref: '#/components/responses/Problem' }
     patch:
-      tags: [key]
-      operationId: modifyKey
-      summary: Append to or increment one key (read-modify-write)
+      tags: [leaderboard]
+      operationId: incrementPlayers
+      summary: Increment several scores atomically (read-modify-write)
       description: |
-        Give exactly one of `append` (missing key = "") or `increment`
-        (missing key = 0; the value must be an integer).
-      parameters:
-        - $ref: '#/components/parameters/IfMatch'
+        All or nothing: each ID must exist and occur once. Increments must be
+        positive integers and must not overflow int64. Results follow request
+        order. Linearizable.
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ModifyBody' }
+            schema: { $ref: '#/components/schemas/ScoreBatch' }
       responses:
         '200':
-          description: The entry after the operation
+          description: Updated players in request order
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Entry' }
+              schema: { $ref: '#/components/schemas/PlayerList' }
         '400': { $ref: '#/components/responses/Problem' }
-        '412': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        default: { $ref: '#/components/responses/Problem' }
     delete:
-      tags: [key]
-      operationId: deleteKey
-      summary: Delete one key
-      parameters:
-        - $ref: '#/components/parameters/IfMatch'
+      tags: [leaderboard]
+      operationId: clearLeaderboard
+      summary: Clear all players when the game ends
+      description: Idempotent. Succeeds even when empty.
       responses:
-        '204':
-          description: Deleted (also returned if the key did not exist)
-        '412': { $ref: '#/components/responses/Problem' }
-
+        '204': { description: Leaderboard cleared }
+        default: { $ref: '#/components/responses/Problem' }
+  /v1/players/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, minLength: 1 }
+    get:
+      tags: [player]
+      operationId: getPlayer
+      summary: Read one player by ID
+      parameters:
+        - $ref: '#/components/parameters/Consistency'
+      responses:
+        '200':
+          description: Player
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Player' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        default: { $ref: '#/components/responses/Problem' }
+    patch:
+      tags: [player]
+      operationId: incrementPlayer
+      summary: Increment one player's score (read-modify-write)
+      description: |
+        Linearizable. Player must exist. Increment must be positive and must not
+        overflow int64.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScoreIncrement' }
+      responses:
+        '200':
+          description: Updated player
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Player' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+        default: { $ref: '#/components/responses/Problem' }
+    delete:
+      tags: [player]
+      operationId: deletePlayer
+      summary: Remove one player
+      description: Idempotent. Unknown players also return 204.
+      responses:
+        '204': { description: Player removed }
+        default: { $ref: '#/components/responses/Problem' }
 components:
   parameters:
-    Key:
-      name: key
-      in: path
-      required: true
-      schema: { type: string }
     Consistency:
       name: consistency
       in: query
-      required: false
+      description: Read consistency, enforced from Part III
       schema: { $ref: '#/components/schemas/Consistency' }
-    Sort:
-      name: sort
-      in: query
-      required: false
-      description: Sort field; prefix `-` for descending. Ties break by key.
-      schema:
-        type: string
-        enum: [key, -key, value, -value, version, -version]
-        default: key
-    IfMatch:
-      name: If-Match
-      in: header
-      required: false
-      description: Write only if the entry's ETag (version) equals this
-      schema: { type: string }
-
-  headers:
-    ETag:
-      description: The entry's version, quoted (e.g. "3")
-      schema: { type: string }
-
   responses:
     Problem:
-      description: Error (RFC 9457 problem details)
+      description: RFC 9457 error details
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
-
   schemas:
     Consistency:
       type: string
       enum: [sequential, linearizable]
       default: sequential
-
-    Entry:
+    Player:
       type: object
-      required: [key, value, version]
+      required: [id, name, score]
       properties:
-        key: { type: string }
-        value: { type: string }
-        version:
-          type: integer
-          format: int64
-          description: Incremented on every write of this key
-
-    EntryList:
+        id: { type: string }
+        name: { type: string }
+        score: { type: integer, format: int64, minimum: 0 }
+    PlayerList:
       type: object
-      required: [entries]
+      required: [players]
       properties:
-        entries:
+        players:
           type: array
-          items: { $ref: '#/components/schemas/Entry' }
-
-    SetBody:
+          items: { $ref: '#/components/schemas/Player' }
+    NewPlayer:
       type: object
-      required: [value]
+      required: [id, name]
       properties:
-        value: { type: string }
-
-    ModifyBody:
+        id: { type: string, minLength: 1 }
+        name: { type: string, minLength: 1 }
+    ScoreIncrement:
       type: object
-      description: Exactly one of `append` or `increment`
+      required: [increment]
       properties:
-        append: { type: string }
-        increment: { type: integer, format: int64 }
-
-    SetKeysBody:
+        increment: { type: integer, format: int64, minimum: 1 }
+    ScoreChange:
       type: object
-      required: [entries]
+      required: [id, increment]
       properties:
-        entries:
+        id: { type: string, minLength: 1 }
+        increment: { type: integer, format: int64, minimum: 1 }
+    ScoreBatch:
+      type: object
+      required: [updates]
+      properties:
+        updates:
           type: array
           minItems: 1
-          items:
-            type: object
-            required: [key, value]
-            properties:
-              key: { type: string }
-              value: { type: string }
-              ifVersion:
-                type: integer
-                format: int64
-                description: Write only if the version equals this (0 = must not exist)
-
-    ModifyKeysBody:
-      type: object
-      required: [ops]
-      properties:
-        ops:
-          type: array
-          minItems: 1
-          items:
-            type: object
-            required: [key]
-            description: Exactly one of `append` or `increment`
-            properties:
-              key: { type: string }
-              append: { type: string }
-              increment: { type: integer, format: int64 }
-              ifVersion:
-                type: integer
-                format: int64
-
-    DeleteResult:
-      type: object
-      required: [deleted]
-      properties:
-        deleted:
-          type: integer
-          format: int32
-
+          items: { $ref: '#/components/schemas/ScoreChange' }
     Problem:
       type: object
       required: [title, status]
