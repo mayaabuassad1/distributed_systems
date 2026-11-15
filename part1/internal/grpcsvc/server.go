@@ -45,19 +45,19 @@ var dummyPlayers = []struct{
 	{id: "carol", name: "Carol", score: 300},
 }
 
-func (s *Server) dummyPlayer(id string, consistency leaderboardv1.Consistency) *leaderboardv1.Player {
+func (s *Server) dummyPlayer(id string) *leaderboardv1.Player {
 	for _, dp := range dummyPlayers {
 		if dp.id == id {
 			return &leaderboardv1.Player{
 				Id:    dp.id,
-				Name:  fmt.Sprintf("%s (from %s, %s)", dp.name, s.NodeID, consistency),
+				Name:  fmt.Sprintf("%s (from %s)", dp.name, s.NodeID),
 				Score: dp.score,
 			}
 		}
 	}
 	return &leaderboardv1.Player{
 		Id:    id,
-		Name:  fmt.Sprintf("Dummy %s (from %s, %s)", id, s.NodeID, consistency),
+		Name:  fmt.Sprintf("Dummy %s (from %s)", id, s.NodeID),
 		Score: 55,
 	}
 }
@@ -105,7 +105,7 @@ func (s *Server) GetPlayers(req *leaderboardv1.GetPlayersRequest, stream leaderb
 		if sel.Id == "missing" {
 			return status.Errorf(codes.NotFound, "key %q not found", sel.Id)
 		}
-		players = append(players, s.dummyPlayer(sel.Id, req.GetConsistency()))
+		players = append(players, s.dummyPlayer(sel.Id))
 	case *leaderboardv1.GetPlayersRequest_Ids: // several keys: missing ones are skipped
 		seen := make(map[string]bool) // check for duplicates in the request
 		for _, id := range sel.Ids.GetIds() {
@@ -113,12 +113,12 @@ func (s *Server) GetPlayers(req *leaderboardv1.GetPlayersRequest, stream leaderb
 				continue
 			}
 			seen[id] = true
-			players = append(players, s.dummyPlayer(id, req.GetConsistency()))
+			players = append(players, s.dummyPlayer(id))
 		}
 
 	case nil: // no selector: every key
 		for _, dp := range dummyPlayers {
-			players = append(players, s.dummyPlayer(dp.id, req.GetConsistency()))
+			players = append(players, s.dummyPlayer(dp.id))
 		}
 	}
 

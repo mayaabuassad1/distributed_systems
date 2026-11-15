@@ -9,7 +9,6 @@ openapi: 3.0.3
 # not implement it: replace it with your own service, keeping the structure:
 #   * every operation has an operationId  -> becomes a Go method name
 #   * reusable pieces live in components (schemas, parameters, responses)
-#   * reads take a `consistency` query parameter
 #   * errors are application/problem+json (RFC 9457)
 # ---------------------------------------------------------------------------
 info:
@@ -18,8 +17,6 @@ info:
   description: |
     One game's leaderboard: unique player IDs, names and non-negative scores.
     New players start at zero.
-    Reads choose sequential or linearizable consistency.
-    All writes are linearizable.
 servers:
   - url: /
     description: Current node
@@ -49,7 +46,6 @@ paths:
           in: query
           description: Maximum results. Zero or absent means unlimited
           schema: { type: integer, format: int32, minimum: 0 }
-        - $ref: '#/components/parameters/Consistency'
       responses:
         '200':
           description: Players in leaderboard order
@@ -84,7 +80,7 @@ paths:
       description: |
         All or nothing: each ID must exist and occur once. Increments must be
         positive integers and must not overflow int64. Results follow request
-        order. Linearizable.
+        order.
       requestBody:
         required: true
         content:
@@ -117,8 +113,6 @@ paths:
       tags: [player]
       operationId: getPlayer
       summary: Read one player by ID
-      parameters:
-        - $ref: '#/components/parameters/Consistency'
       responses:
         '200':
           description: Player
@@ -133,7 +127,7 @@ paths:
       operationId: incrementPlayer
       summary: Increment one player's score (read-modify-write)
       description: |
-        Linearizable. Player must exist. Increment must be positive and must not
+        Player must exist. Increment must be positive and must not
         overflow int64.
       requestBody:
         required: true
@@ -158,12 +152,6 @@ paths:
         '204': { description: Player removed }
         default: { $ref: '#/components/responses/Problem' }
 components:
-  parameters:
-    Consistency:
-      name: consistency
-      in: query
-      description: Read consistency, enforced from Part III
-      schema: { $ref: '#/components/schemas/Consistency' }
   responses:
     Problem:
       description: RFC 9457 error details
@@ -171,10 +159,6 @@ components:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }
   schemas:
-    Consistency:
-      type: string
-      enum: [sequential, linearizable]
-      default: sequential
     Player:
       type: object
       required: [id, name, score]
