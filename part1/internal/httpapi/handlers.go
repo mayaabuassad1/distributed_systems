@@ -26,13 +26,13 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	kvsv1 "github.com/your-team/kvs/gen/kvs/v1"
+	leaderboardv1 "github.com/your-team/kvs/gen/leaderboard/v1"
 	"github.com/your-team/kvs/gen/rest"
 )
 
 // Handlers implements rest.StrictServerInterface (one method per operationId).
 type Handlers struct {
-	KV kvsv1.KVStoreClient
+	KV leaderboardv1.LeaderboardServiceClient
 }
 
 // Compile-time check: the build fails here if a method is missing or has the
@@ -40,7 +40,7 @@ type Handlers struct {
 var _ rest.StrictServerInterface = (*Handlers)(nil)
 
 // NewHTTPHandler wires the strict handlers into a net/http mux.
-func NewHTTPHandler(kv kvsv1.KVStoreClient, mux *http.ServeMux) http.Handler {
+func NewHTTPHandler(kv leaderboardv1.LeaderboardServiceClient, mux *http.ServeMux) http.Handler {
 	strict := rest.NewStrictHandlerWithOptions(&Handlers{KV: kv}, nil, rest.StrictHTTPServerOptions{
 		// Malformed requests (bad JSON, wrong parameter types) -> 400.
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
@@ -247,6 +247,8 @@ func httpStatusFromGRPC(err error) int {
 		return http.StatusServiceUnavailable // 503
 	case codes.DeadlineExceeded:
 		return http.StatusGatewayTimeout // 504
+	case codes.alreadyExists:
+		return http.StatusConflict // 409: e.g. CreatePlayer with an existing ID
 	default:
 		return http.StatusInternalServerError // 500
 	}
