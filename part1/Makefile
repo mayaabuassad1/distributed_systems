@@ -26,7 +26,7 @@ gen-proto:
 	protoc -I proto \
 	  --go_out=. --go_opt=module=$(MODULE) \
 	  --go-grpc_out=. --go-grpc_opt=module=$(MODULE) \
-	  proto/kvs/v1/kvs.proto
+	  proto/leaderboard/v1/leaderboard.proto
 
 build: gen
 	go mod tidy

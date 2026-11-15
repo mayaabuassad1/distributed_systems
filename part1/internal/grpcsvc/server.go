@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	kvsv1 "github.com/your-team/kvs/gen/kvs/v1"
+	kvsv1 "github.com/your-team/kvs/gen/leaderboard/v1"
 )
 
 // Server implements kvsv1.KVStoreServer.
@@ -25,7 +25,7 @@ import (
 // codes.Unimplemented (HTTP 501 after translation): when you add RPCs for your
 // own service, the project keeps compiling while you work through them.
 type Server struct {
-	kvsv1.UnimplementedKVStoreServer
+	leaderboardv1.UnimplementedLeaderboardServiceServer
 
 	NodeID string // shown in dummy values, so you can see WHICH server answered
 }

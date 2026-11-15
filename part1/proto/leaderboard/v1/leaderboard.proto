@@ -1,0 +1,101 @@
+// STEPS 3-4 — The internal gRPC service (compile with `make gen-proto`).
+//
+// This is the running EXAMPLE (a key-value store); replace it with your own
+// service. Rules shown here:
+//   * every RPC has its OWN request and response message
+//   * streams carry a variable number of items (keys, entries)
+//   * errors are gRPC status codes, not fields in the messages
+//   * RPCs need not map 1:1 to REST operations (8 REST operations, 3 RPCs)
+syntax = "proto3";
+package leaderboard.v1;
+
+option go_package = "github.com/your-team/kvs/gen/leaderboard/v1;leaderboardv1";
+
+service LeaderboardService {
+  // Create a new player with score 0. Returns ALREADY_EXISTS if the player already exists
+  rpc CreatePlayer(CreatePlayerRequest) returns (CreatePlayerResponse);
+  // Applies one or more score increments atomically when the client closes
+  // the stream. Returns NOT_FOUND if any target player does not exist.
+  rpc IncrementScores(stream IncrementScoresRequest) returns (IncrementScoresResponse);
+  // Reads one player, selected players, or the full leaderboard sorted by
+  // score descending (ties broken by id ascending).
+  // Returns NOT_FOUND only when a single id is requested and does not exist.
+  rpc GetPlayers(GetPlayersRequest) returns (stream GetPlayersResponse);
+  // Not in Part I:
+  // rpc Watch(WatchRequest) returns (stream WatchResponse);
+  // Deletes one player by id or clears the entire leaderboard atomically when
+  // the client closes the stream.
+  rpc DeletePlayers(stream DeletePlayersRequest) returns (DeletePlayersResponse);
+}
+
+enum Consistency {
+  CONSISTENCY_UNSPECIFIED = 0; // treated as SEQUENTIAL
+  CONSISTENCY_SEQUENTIAL = 1;
+  CONSISTENCY_LINEARIZABLE = 2;
+}
+
+message Player {
+  string id = 1;
+  string name = 2;
+  int64 score = 3;
+}
+
+// ---- Create ------------------------------------------------------------
+message CreatePlayerRequest {
+  string id = 1;
+  string name = 2;
+}
+message CreatePlayerResponse {
+  Player player = 1;
+}
+
+// ---- Read --------------------------------------------------------------
+message GetPlayersRequest {
+  oneof select {
+    string id = 1; // single player lookup
+    PlayerIdList ids = 2; // multiple player lookup
+  }
+  int32 limit = 3; // 0 = no limit
+  Consistency consistency = 4; // default = SEQUENTIAL
+}
+message PlayerIdList {
+  repeated string ids = 1;
+}
+/*message SortOrder {
+     enum Field {
+       FIELD_KEY = 0;
+       FIELD_VALUE = 1;
+       FIELD_VERSION = 2;
+     }
+     Field field = 1;
+     bool descending = 2; // ties are always broken by key, ascending
+   }*/
+message GetPlayersResponse {
+  Player player = 1; // one message per player, in sort order
+}
+
+// ---- Update ------------------------------------------------------------
+message IncrementScoresRequest {
+  string id = 1;
+  int64 delta = 2; // must be positive integer (negative deltas are not allowed)
+}
+message IncrementScoresResponse {
+  repeated Player players = 1; // players after the increment, request order
+}
+
+// ---- Delete ------------------------------------------------------------
+message DeletePlayersRequest {
+  oneof target {
+    string id = 1; // single player deletion
+    bool all = 2; // delete all players (must be true)
+  }
+}
+message DeletePlayersResponse {
+  int32 deleted = 1; // number of players deleted (0 or 1 for single deletion)
+}
+
+// ---- Watch (not in Part I) ---------------------------------------------
+// message WatchRequest  { string prefix = 1; optional int64 since = 2; }
+// message WatchResponse {
+//   int64 revision = 1; Entry entry = 2; bool deleted = 3;
+// }

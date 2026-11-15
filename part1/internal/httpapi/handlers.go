@@ -21,10 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
-	"strconv"
-	"strings"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -62,153 +59,39 @@ func NewHTTPHandler(kv kvsv1.KVStoreClient, mux *http.ServeMux) http.Handler {
 // one method per operationId in your openapi.yaml.
 // ---------------------------------------------------------------------------
 
-// GET /v1/keys?key=..&key=.. | ?prefix=.. | ?from=..&to=..  [&sort=&limit=&keysOnly=]
-func (h *Handlers) GetKeys(ctx context.Context, req rest.GetKeysRequestObject) (rest.GetKeysResponseObject, error) {
-	p := req.Params
-	in := &kvsv1.ReadRequest{
-		Sort:        toProtoSort(p.Sort),
-		Limit:       deref(p.Limit),
-		KeysOnly:    deref(p.KeysOnly),
-		Consistency: toProtoConsistency(p.Consistency),
-	}
-	// At most one selector; none = all keys.
-	selectors := 0
-	if p.Key != nil {
-		selectors++
-		in.Select = &kvsv1.ReadRequest_Keys{Keys: &kvsv1.KeyList{Keys: *p.Key}}
-	}
-	if p.Prefix != nil {
-		selectors++
-		in.Select = &kvsv1.ReadRequest_Prefix{Prefix: *p.Prefix}
-	}
-	if p.From != nil || p.To != nil {
-		selectors++
-		in.Select = &kvsv1.ReadRequest_Range{Range: &kvsv1.KeyRange{From: deref(p.From), To: deref(p.To)}}
-	}
-	if selectors > 1 {
-		return nil, status.Error(codes.InvalidArgument, "give at most one of key, prefix, or from/to")
-	}
-
-	stream, err := h.KV.Read(ctx, in)
-	if err != nil {
-		return nil, err
-	}
-	entries, err := recvEntries(stream)
-	if err != nil {
-		return nil, err // mapped to an HTTP status by ResponseErrorHandlerFunc
-	}
-	return rest.GetKeys200JSONResponse{Entries: entries}, nil
+// DELETE /v1/players - ClearLeaderboard Clear all players when the game ends
+func (h *Handlers) ClearLeaderboard(ctx context.Context, req rest.ClearLeaderboardRequestObject) (rest.ClearLeaderboardResponseObject, error) {
+	return nil, status.Error(codes.Unimplemented, "ClearLeaderboard is not implemented")
 }
 
-// POST /v1/keys — set several keys in one atomic Update.
-func (h *Handlers) SetKeys(ctx context.Context, req rest.SetKeysRequestObject) (rest.SetKeysResponseObject, error) {
-	var ups []*kvsv1.UpdateRequest
-	for _, e := range req.Body.Entries {
-		ups = append(ups, &kvsv1.UpdateRequest{
-			Key: e.Key, Op: &kvsv1.UpdateRequest_Set{Set: e.Value}, IfVersion: e.IfVersion})
-	}
-	out, err := h.update(ctx, ups)
-	if err != nil {
-		return nil, err // FAILED_PRECONDITION -> 412
-	}
-	return rest.SetKeys200JSONResponse{Entries: entriesFromProto(out.GetEntries())}, nil
+// GET /v1/players - ListPlayers Read selected players or the whole leaderboard
+func (h *Handlers) ListPlayers(ctx context.Context, req rest.ListPlayersRequestObject) (rest.ListPlayersResponseObject, error) {
+	return nil, status.Error(codes.Unimplemented, "ListPlayers is not implemented")
 }
 
-// PATCH /v1/keys — append/increment several keys in one atomic Update.
-func (h *Handlers) ModifyKeys(ctx context.Context, req rest.ModifyKeysRequestObject) (rest.ModifyKeysResponseObject, error) {
-	var ups []*kvsv1.UpdateRequest
-	for _, o := range req.Body.Ops {
-		u, err := modifyOp(o.Key, o.Append, o.Increment)
-		if err != nil {
-			return nil, err
-		}
-		u.IfVersion = o.IfVersion
-		ups = append(ups, u)
-	}
-	out, err := h.update(ctx, ups)
-	if err != nil {
-		return nil, err
-	}
-	return rest.ModifyKeys200JSONResponse{Entries: entriesFromProto(out.GetEntries())}, nil
+// PATCH /v1/players - IncrementPlayers Increment several scores atomically (read-modify-write)
+func (h *Handlers) IncrementPlayers(ctx context.Context, req rest.IncrementPlayersRequestObject) (rest.IncrementPlayersResponseObject, error) {
+	return nil, status.Error(codes.Unimplemented, "IncrementPlayers is not implemented")
 }
 
-// DELETE /v1/keys?key=..&key=..
-func (h *Handlers) DeleteKeys(ctx context.Context, req rest.DeleteKeysRequestObject) (rest.DeleteKeysResponseObject, error) {
-	var dels []*kvsv1.DeleteRequest
-	for _, k := range req.Params.Key {
-		dels = append(dels, &kvsv1.DeleteRequest{Key: k})
-	}
-	out, err := h.delete(ctx, dels)
-	if err != nil {
-		return nil, err
-	}
-	return rest.DeleteKeys200JSONResponse{Deleted: out.GetDeleted()}, nil
+// POST /v1/players - CreatePlayer Join with a new player and score zero
+func (h *Handlers) CreatePlayer(ctx context.Context, req rest.CreatePlayerRequestObject) (rest.CreatePlayerResponseObject, error) {
+	return nil, status.Error(codes.Unimplemented, "CreatePlayer is not implemented")
 }
 
-// GET /v1/keys/{key} — a Read of one key; its first message is the entry.
-func (h *Handlers) GetKey(ctx context.Context, req rest.GetKeyRequestObject) (rest.GetKeyResponseObject, error) {
-	stream, err := h.KV.Read(ctx, &kvsv1.ReadRequest{
-		Select:      &kvsv1.ReadRequest_Key{Key: req.Key},
-		Consistency: toProtoConsistency(req.Params.Consistency),
-	})
-	if err != nil {
-		return nil, err
-	}
-	msg, err := stream.Recv()
-	if err != nil {
-		return nil, err // NOT_FOUND -> 404
-	}
-	e := msg.GetEntry()
-	return rest.GetKey200JSONResponse{
-		Body:    entryFromProto(e),
-		Headers: rest.GetKey200ResponseHeaders{ETag: ptr(etag(e.GetVersion()))}, // optional header -> *string
-	}, nil
+// DELETE /v1/players/{id} - DeletePlayer Remove one player
+func (h *Handlers) DeletePlayer(ctx context.Context, req rest.DeletePlayerRequestObject) (rest.DeletePlayerResponseObject, error) {
+	return nil, status.Error(codes.Unimplemented, "DeletePlayer is not implemented")
 }
 
-// POST /v1/keys/{key} — an Update with one "set"; 201 if the key is new.
-func (h *Handlers) SetKey(ctx context.Context, req rest.SetKeyRequestObject) (rest.SetKeyResponseObject, error) {
-	ifVersion, err := versionFromIfMatch(req.Params.IfMatch)
-	if err != nil {
-		return nil, err
-	}
-	out, err := h.update(ctx, []*kvsv1.UpdateRequest{{
-		Key: req.Key, Op: &kvsv1.UpdateRequest_Set{Set: req.Body.Value}, IfVersion: ifVersion}})
-	if err != nil {
-		return nil, err // FAILED_PRECONDITION -> 412
-	}
-	e := entryFromProto(out.GetEntries()[0])
-	if out.GetCreated()[0] {
-		return rest.SetKey201JSONResponse(e), nil
-	}
-	return rest.SetKey200JSONResponse(e), nil
+// GET /v1/players/{id} - GetPlayer Read one player by ID
+func (h *Handlers) GetPlayer(ctx context.Context, req rest.GetPlayerRequestObject) (rest.GetPlayerResponseObject, error) {
+	return nil, status.Error(codes.Unimplemented, "GetPlayer is not implemented")
 }
 
-// PATCH /v1/keys/{key} — an Update with one "append" or "increment".
-func (h *Handlers) ModifyKey(ctx context.Context, req rest.ModifyKeyRequestObject) (rest.ModifyKeyResponseObject, error) {
-	u, err := modifyOp(req.Key, req.Body.Append, req.Body.Increment)
-	if err != nil {
-		return nil, err
-	}
-	if u.IfVersion, err = versionFromIfMatch(req.Params.IfMatch); err != nil {
-		return nil, err
-	}
-	out, err := h.update(ctx, []*kvsv1.UpdateRequest{u})
-	if err != nil {
-		return nil, err
-	}
-	return rest.ModifyKey200JSONResponse(entryFromProto(out.GetEntries()[0])), nil
-}
-
-// DELETE /v1/keys/{key}
-func (h *Handlers) DeleteKey(ctx context.Context, req rest.DeleteKeyRequestObject) (rest.DeleteKeyResponseObject, error) {
-	ifVersion, err := versionFromIfMatch(req.Params.IfMatch)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := h.delete(ctx, []*kvsv1.DeleteRequest{{Key: req.Key, IfVersion: ifVersion}}); err != nil {
-		return nil, err
-	}
-	return rest.DeleteKey204Response{}, nil
+// PATCH /v1/players/{id} - IncrementPlayer Increment a player's score
+func (h *Handlers) IncrementPlayer(ctx context.Context, req rest.IncrementPlayerRequestObject) (rest.IncrementPlayerResponseObject, error) {
+	return nil, status.Error(codes.Unimplemented, "IncrementPlayer is not implemented")
 }
 
 // ---------------------------------------------------------------------------
@@ -216,7 +99,7 @@ func (h *Handlers) DeleteKey(ctx context.Context, req rest.DeleteKeyRequestObjec
 // ---------------------------------------------------------------------------
 
 // recvEntries reads a Read stream to the end.
-func recvEntries(stream kvsv1.KVStore_ReadClient) ([]rest.Entry, error) {
+/*func recvEntries(stream kvsv1.KVStore_ReadClient) ([]rest.Entry, error) {
 	entries := []rest.Entry{} // serialize as [] rather than null
 	for {
 		msg, err := stream.Recv()
@@ -304,14 +187,14 @@ func toProtoSort[T ~string](s *T) *kvsv1.SortOrder {
 	return o
 }
 
-func entryFromProto(e *kvsv1.Entry) rest.Entry {
-	return rest.Entry{Key: e.GetKey(), Value: e.GetValue(), Version: e.GetVersion()}
+func playerFromProto(p *kvsv1.Player) rest.Player {
+	return rest.Player{Id: p.GetId(), Name: p.GetName(), Score: p.GetScore()}
 }
 
-func entriesFromProto(es []*kvsv1.Entry) []rest.Entry {
-	out := make([]rest.Entry, 0, len(es))
-	for _, e := range es {
-		out = append(out, entryFromProto(e))
+func playersFromProto(ps []*kvsv1.Player) []rest.Player {
+	out := make([]rest.Player, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, playerFromProto(p))
 	}
 	return out
 }
@@ -340,7 +223,7 @@ func deref[T any](p *T) T {
 		return zero
 	}
 	return *p
-}
+}*/
 
 // httpStatusFromGRPC is the single place where gRPC status codes become HTTP
 // status codes. Keep it consistent with the responses in openapi.yaml.
