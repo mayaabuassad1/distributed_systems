@@ -21,13 +21,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
-
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 
 	leaderboardv1 "github.com/your-team/kvs/gen/leaderboard/v1"
 	"github.com/your-team/kvs/gen/rest"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Handlers implements rest.StrictServerInterface (one method per operationId).
@@ -41,17 +41,21 @@ var _ rest.StrictServerInterface = (*Handlers)(nil)
 
 // NewHTTPHandler wires the strict handlers into a net/http mux.
 func NewHTTPHandler(kv leaderboardv1.LeaderboardServiceClient, mux *http.ServeMux) http.Handler {
+	// Malformed requests (bad JSON, wrong parameter types) -> 400.
+	requestError := func(w http.ResponseWriter, r *http.Request, err error) {
+		writeProblem(w, http.StatusBadRequest, err.Error())
+	}
 	strict := rest.NewStrictHandlerWithOptions(&Handlers{KV: kv}, nil, rest.StrictHTTPServerOptions{
-		// Malformed requests (bad JSON, wrong parameter types) -> 400.
-		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			writeProblem(w, http.StatusBadRequest, err.Error())
-		},
+		RequestErrorHandlerFunc: requestError,
 		// Errors returned by the handlers below (usually gRPC errors).
 		ResponseErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			writeProblem(w, httpStatusFromGRPC(err), errorMessage(err))
 		},
 	})
-	return rest.HandlerFromMux(strict, mux)
+	return rest.HandlerWithOptions(strict, rest.StdHTTPServerOptions{
+		BaseRouter:       mux,
+		ErrorHandlerFunc: requestError,
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -61,37 +65,102 @@ func NewHTTPHandler(kv leaderboardv1.LeaderboardServiceClient, mux *http.ServeMu
 
 // DELETE /v1/players - ClearLeaderboard Clear all players when the game ends
 func (h *Handlers) ClearLeaderboard(ctx context.Context, req rest.ClearLeaderboardRequestObject) (rest.ClearLeaderboardResponseObject, error) {
-	return nil, status.Error(codes.Unimplemented, "ClearLeaderboard is not implemented")
+	err := h.deletePlayers(ctx, &leaderboardv1.DeletePlayersRequest{
+		Target: &leaderboardv1.DeletePlayersRequest_All{All: true},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return rest.ClearLeaderboard204Response{}, nil
 }
 
 // GET /v1/players - ListPlayers Read selected players or the whole leaderboard
 func (h *Handlers) ListPlayers(ctx context.Context, req rest.ListPlayersRequestObject) (rest.ListPlayersResponseObject, error) {
-	return nil, status.Error(codes.Unimplemented, "ListPlayers is not implemented")
+	in := &leaderboardv1.GetPlayersRequest{}
+	if req.Params.Limit != nil {
+		in.Limit = *req.Params.Limit
+	}
+	if req.Params.Id != nil {
+		for _, id := range *req.Params.Id {
+			if id == "" {
+				return nil, status.Error(codes.InvalidArgument, "player ID cannot be empty")
+			}
+		}
+		in.Select = &leaderboardv1.GetPlayersRequest_Ids{Ids: &leaderboardv1.PlayerIdList{Ids: *req.Params.Id}}
+	}
+	players, err := h.getPlayers(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+	return rest.ListPlayers200JSONResponse{Players: players}, nil
 }
 
 // PATCH /v1/players - IncrementPlayers Increment several scores atomically (read-modify-write)
 func (h *Handlers) IncrementPlayers(ctx context.Context, req rest.IncrementPlayersRequestObject) (rest.IncrementPlayersResponseObject, error) {
-	return nil, status.Error(codes.Unimplemented, "IncrementPlayers is not implemented")
+	if req.Body == nil {
+		return nil, status.Error(codes.InvalidArgument, "request body is required")
+	}
+	updates := make([]*leaderboardv1.IncrementScoresRequest, 0, len(req.Body.Updates))
+	for _, update := range req.Body.Updates {
+		updates = append(updates, &leaderboardv1.IncrementScoresRequest{Id: update.Id, Delta: update.Increment})
+	}
+	players, err := h.incrementScores(ctx, updates)
+	if err != nil {
+		return nil, err
+	}
+	return rest.IncrementPlayers200JSONResponse{Players: players}, nil
 }
 
 // POST /v1/players - CreatePlayer Join with a new player and score zero
 func (h *Handlers) CreatePlayer(ctx context.Context, req rest.CreatePlayerRequestObject) (rest.CreatePlayerResponseObject, error) {
-	return nil, status.Error(codes.Unimplemented, "CreatePlayer is not implemented")
+	if req.Body == nil {
+		return nil, status.Error(codes.InvalidArgument, "request body is required")
+	}
+	out, err := h.KV.CreatePlayer(ctx, &leaderboardv1.CreatePlayerRequest{Id: req.Body.Id, Name: req.Body.Name})
+	if err != nil {
+		return nil, err
+	}
+	return rest.CreatePlayer201JSONResponse(playerFromProto(out.GetPlayer())), nil
 }
 
 // DELETE /v1/players/{id} - DeletePlayer Remove one player
 func (h *Handlers) DeletePlayer(ctx context.Context, req rest.DeletePlayerRequestObject) (rest.DeletePlayerResponseObject, error) {
-	return nil, status.Error(codes.Unimplemented, "DeletePlayer is not implemented")
+	err := h.deletePlayers(ctx, &leaderboardv1.DeletePlayersRequest{
+		Target: &leaderboardv1.DeletePlayersRequest_Id{Id: req.Id},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return rest.DeletePlayer204Response{}, nil
 }
 
 // GET /v1/players/{id} - GetPlayer Read one player by ID
 func (h *Handlers) GetPlayer(ctx context.Context, req rest.GetPlayerRequestObject) (rest.GetPlayerResponseObject, error) {
-	return nil, status.Error(codes.Unimplemented, "GetPlayer is not implemented")
+	players, err := h.getPlayers(ctx, &leaderboardv1.GetPlayersRequest{
+		Select: &leaderboardv1.GetPlayersRequest_Id{Id: req.Id},
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(players) != 1 {
+		return nil, status.Error(codes.Internal, "expected one player from gRPC")
+	}
+	return rest.GetPlayer200JSONResponse(players[0]), nil
 }
 
 // PATCH /v1/players/{id} - IncrementPlayer Increment a player's score
 func (h *Handlers) IncrementPlayer(ctx context.Context, req rest.IncrementPlayerRequestObject) (rest.IncrementPlayerResponseObject, error) {
-	return nil, status.Error(codes.Unimplemented, "IncrementPlayer is not implemented")
+	if req.Body == nil {
+		return nil, status.Error(codes.InvalidArgument, "request body is required")
+	}
+	players, err := h.incrementScores(ctx, []*leaderboardv1.IncrementScoresRequest{{Id: req.Id, Delta: req.Body.Increment}})
+	if err != nil {
+		return nil, err
+	}
+	if len(players) != 1 {
+		return nil, status.Error(codes.Internal, "expected one updated player from gRPC")
+	}
+	return rest.IncrementPlayer200JSONResponse(players[0]), nil
 }
 
 // ---------------------------------------------------------------------------
@@ -224,6 +293,67 @@ func deref[T any](p *T) T {
 	}
 	return *p
 }*/
+
+// Consume the complete stream so final gRPC errors are not lost.
+func (h *Handlers) getPlayers(ctx context.Context, req *leaderboardv1.GetPlayersRequest) ([]rest.Player, error) {
+	stream, err := h.KV.GetPlayers(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	players := []rest.Player{} // an empty result is [] in JSON, rather than null
+	for {
+		out, err := stream.Recv()
+		if errors.Is(err, io.EOF) {
+			return players, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		players = append(players, playerFromProto(out.GetPlayer()))
+	}
+}
+
+// Send the complete batch on one RPC, preserving the backend's atomic operation.
+func (h *Handlers) incrementScores(ctx context.Context, updates []*leaderboardv1.IncrementScoresRequest) ([]rest.Player, error) {
+	stream, err := h.KV.IncrementScores(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, update := range updates {
+		if err := stream.Send(update); err != nil {
+			if !errors.Is(err, io.EOF) {
+				return nil, err
+			}
+			break // CloseAndRecv retrieves the server's final status.
+		}
+	}
+	out, err := stream.CloseAndRecv()
+	if err != nil {
+		return nil, err
+	}
+	players := make([]rest.Player, 0, len(out.GetPlayers()))
+	for _, p := range out.GetPlayers() {
+		players = append(players, playerFromProto(p))
+	}
+	return players, nil
+}
+
+// A single target represents either one player or the entire leaderboard.
+func (h *Handlers) deletePlayers(ctx context.Context, target *leaderboardv1.DeletePlayersRequest) error {
+	stream, err := h.KV.DeletePlayers(ctx)
+	if err != nil {
+		return err
+	}
+	if err := stream.Send(target); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	_, err = stream.CloseAndRecv()
+	return err
+}
+
+func playerFromProto(p *leaderboardv1.Player) rest.Player {
+	return rest.Player{Id: p.GetId(), Name: p.GetName(), Score: p.GetScore()}
+}
 
 // httpStatusFromGRPC is the single place where gRPC status codes become HTTP
 // status codes. Keep it consistent with the responses in openapi.yaml.
