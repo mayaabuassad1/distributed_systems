@@ -247,7 +247,7 @@ func httpStatusFromGRPC(err error) int {
 		return http.StatusServiceUnavailable // 503
 	case codes.DeadlineExceeded:
 		return http.StatusGatewayTimeout // 504
-	case codes.alreadyExists:
+	case codes.AlreadyExists:
 		return http.StatusConflict // 409: e.g. CreatePlayer with an existing ID
 	default:
 		return http.StatusInternalServerError // 500
