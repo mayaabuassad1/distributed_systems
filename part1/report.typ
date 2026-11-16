@@ -94,11 +94,11 @@ The implementation is split across five main files:
 
 == Design Choices
 
-We consolidated the seven REST operations into four gRPC RPCs (`CreatePlayer`, `GetPlayers`, `IncrementScores`, and `DeletePlayers`) and used gRPC streams for variable-length operations. Unifying single-player and multi-player operations under the same RPCs keeps the internal gRPC interface compact and avoids duplicating validation and sorting logic across separate endpoints, while streaming avoids large repeated protobuf message fields. `GetPlayers` streams ranked players back one by one, and `IncrementScores` and `DeletePlayers` read a client stream via `recvAll` and apply the batch only after the client closes the stream.
+We consolidated the seven REST operations into four gRPC RPCs (`CreatePlayer`, `GetPlayers`, `IncrementScores`, and `DeletePlayers`) and used gRPC streams for variable-length operations. Unifying single-player and multi-player operations under the same RPCs keeps the internal gRPC interface compact and avoids duplicating validation and sorting logic across separate endpoints. `GetPlayers` streams ranked players back one by one. `IncrementScores` and `DeletePlayers` read a client stream via `recvAll` and compute a dummy batch reply only after the client closes the stream. `IncrementScoresResponse` contains a repeated list of players in request order.
 
-For `Server.IncrementScores`, we validate the entire batch in a first pass before computing any updated scores. If the stream is empty or any entry has an empty ID, a non-positive increment (`delta <= 0`), a duplicate player ID, an unknown ID, or an `int64` overflow, the RPC aborts with an error so partial updates cannot happen. We also kept two different ordering rules: `Server.GetPlayers` always sorts results by score descending (breaking ties by ID ascending) before applying `limit`, whereas `Server.IncrementScores` returns players in the exact order sent by the client so party callers can match results to their input list.
+For `Server.IncrementScores`, we validate the entire batch in a first pass before computing any updated scores. If the stream is empty or any entry has an empty ID, a non-positive increment (`delta <= 0`), a duplicate player ID, the simulated absent ID `missing`, or an `int64` overflow, the RPC aborts with an error. We also kept two different ordering rules: `Server.GetPlayers` always sorts results by score descending (breaking ties by ID ascending) before applying `limit`, whereas `Server.IncrementScores` returns players in the exact order sent by the client so party callers can match results to their input list.
 
-Finally, `httpapi.Handlers` is completely stateless and performs no domain validation of its own. Keeping all validation and dummy response logic behind the gRPC interface ensures that a server started with `-target` forwards requests identically to a standalone node without duplicating rules in the HTTP layer.
+Finally, `httpapi.Handlers` is completely stateless. It checks request bodies, empty query IDs, and the requested consistency value; the gRPC service handles operation validation and dummy results. A server started with `-target` sends the same RPCs to the configured backend instead of its local service.
 
 = Service Semantics
 
@@ -115,7 +115,9 @@ The service stores `Player` records, each with a unique non-empty `id` (`string`
 
 = RESTful API
 
-All endpoints accept and return `application/json`, and error responses return RFC 9457 `application/problem+json` payloads (`Problem` with `type`, `title`, `status`, and `detail`).
+Request and response bodies use `application/json`, except that successful deletes return `204` with no body. Error responses use RFC 9457 `application/problem+json` payloads: `title` and `status` are required; `type` and `detail` are optional. The current error writer includes `title`, `status`, and `detail`.
+
+`Player` contains `id`, `name`, and `score`; `PlayerList` wraps a `players` array. `NewPlayer` requires `id` and `name`. `ScoreIncrement` requires `increment`, while `ScoreBatch` requires a nonempty `updates` array of objects containing `id` and `increment`. Full schemas and default problem responses are defined in `api/openapi.yaml`.
 
 #figure(
   table(
@@ -140,6 +142,8 @@ All endpoints accept and return `application/json`, and error responses return R
 
 In `proto/leaderboard/v1/leaderboard.proto`, every RPC defines its own request and response message types (`CreatePlayerRequest`/`Response`, `GetPlayersRequest`/`Response`, `IncrementScoresRequest`/`Response`, `DeletePlayersRequest`/`Response`), and errors are returned via gRPC status codes rather than response fields.
 
+Player replies identify the answering node in `Player.name`. `DeletePlayersResponse` contains the dummy `deleted` count and `node_id`, including for clear-all and already-absent players. The HTTP delete handlers wait for that reply and return an empty `204` response.
+
 #figure(
   table(
     columns: (auto, auto, auto, auto),
@@ -157,7 +161,7 @@ In `proto/leaderboard/v1/leaderboard.proto`, every RPC defines its own request a
   caption: [Mapping between REST operations and `LeaderboardService` RPCs.],
 ) <fig-rest-grpc-map>
 
-`httpStatusFromGRPC` in `internal/httpapi/handlers.go` translates gRPC status codes to HTTP responses:
+The handlers choose successful HTTP status codes. `httpStatusFromGRPC` in `internal/httpapi/handlers.go` centrally translates errors, including the cases below. `FAILED_PRECONDITION` maps to `412` (retained from the template but not currently emitted by the leaderboard service); other unlisted errors map to `500`.
 
 #figure(
   table(
@@ -169,7 +173,7 @@ In `proto/leaderboard/v1/leaderboard.proto`, every RPC defines its own request a
     [`codes.InvalidArgument`], [`400 Bad Request`], [Empty fields or streams, `delta <= 0`, duplicate batch IDs, `int64` overflow, `limit < 0`, or `target.all = false`],
     [`codes.NotFound`], [`404 Not Found`], [Missing player in `getPlayer` (`select.id`) or `IncrementScores`],
     [`codes.AlreadyExists`], [`409 Conflict`], [Duplicate player ID in `createPlayer`],
-    [`codes.Unimplemented`], [`501 Not Implemented`], [Unimplemented handler or RPC (`UnimplementedLeaderboardServiceServer`)],
+    [`codes.Unimplemented`], [`501 Not Implemented`], [Handler or RPC without an implementation],
     [`codes.Unavailable`], [`503 Service Unavailable`], [Target gRPC node cannot be reached (gRPC client error)],
     [`codes.DeadlineExceeded`], [`504 Gateway Timeout`], [Upstream gRPC call timed out (gRPC client error)],
   ),
