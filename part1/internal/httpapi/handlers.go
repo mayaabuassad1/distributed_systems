@@ -3,14 +3,14 @@
 // STEP 5 — Every HTTP handler translates the REST request into gRPC call(s),
 // and the gRPC reply (or error) back into a REST response:
 //
-//	client --HTTP/JSON--> Handlers --gRPC--> KVStore server (this node or a peer)
+//	client --HTTP/JSON--> Handlers --gRPC--> LeaderboardService (this node or a peer)
 //
-// Eight REST operations share three RPCs:
+// Seven REST operations share four RPCs:
 //
-//	GET    /v1/keys, /v1/keys/{key}  -> Read   (server stream of entries)
-//	POST   /v1/keys, /v1/keys/{key}  -> Update (client stream, op = set)
-//	PATCH  /v1/keys, /v1/keys/{key}  -> Update (client stream, op = append|increment)
-//	DELETE /v1/keys, /v1/keys/{key}  -> Delete (client stream)
+//	GET    /v1/players, /v1/players/{id}  -> GetPlayers (server stream)
+//	POST   /v1/players                    -> CreatePlayer
+//	PATCH  /v1/players, /v1/players/{id}  -> IncrementScores (client stream)
+//	DELETE /v1/players, /v1/players/{id}  -> DeletePlayers (client stream)
 //
 // Handlers hold NO application state. That is deliberate: in Parts II-III
 // the gRPC target becomes "the server responsible for this request", which
@@ -76,7 +76,11 @@ func (h *Handlers) ClearLeaderboard(ctx context.Context, req rest.ClearLeaderboa
 
 // GET /v1/players - ListPlayers Read selected players or the whole leaderboard
 func (h *Handlers) ListPlayers(ctx context.Context, req rest.ListPlayersRequestObject) (rest.ListPlayersResponseObject, error) {
-	in := &leaderboardv1.GetPlayersRequest{}
+	consistency, err := toProtoConsistency(req.Params.Consistency)
+	if err != nil {
+		return nil, err
+	}
+	in := &leaderboardv1.GetPlayersRequest{Consistency: consistency}
 	if req.Params.Limit != nil {
 		in.Limit = *req.Params.Limit
 	}
@@ -136,8 +140,13 @@ func (h *Handlers) DeletePlayer(ctx context.Context, req rest.DeletePlayerReques
 
 // GET /v1/players/{id} - GetPlayer Read one player by ID
 func (h *Handlers) GetPlayer(ctx context.Context, req rest.GetPlayerRequestObject) (rest.GetPlayerResponseObject, error) {
+	consistency, err := toProtoConsistency(req.Params.Consistency)
+	if err != nil {
+		return nil, err
+	}
 	players, err := h.getPlayers(ctx, &leaderboardv1.GetPlayersRequest{
-		Select: &leaderboardv1.GetPlayersRequest_Id{Id: req.Id},
+		Select:      &leaderboardv1.GetPlayersRequest_Id{Id: req.Id},
+		Consistency: consistency,
 	})
 	if err != nil {
 		return nil, err
@@ -353,6 +362,17 @@ func (h *Handlers) deletePlayers(ctx context.Context, target *leaderboardv1.Dele
 
 func playerFromProto(p *leaderboardv1.Player) rest.Player {
 	return rest.Player{Id: p.GetId(), Name: p.GetName(), Score: p.GetScore()}
+}
+
+// Convert the REST read option to protobuf; sequential is the default.
+func toProtoConsistency[T ~string](value *T) (leaderboardv1.Consistency, error) {
+	if value == nil || string(*value) == "sequential" {
+		return leaderboardv1.Consistency_CONSISTENCY_SEQUENTIAL, nil
+	}
+	if string(*value) == "linearizable" {
+		return leaderboardv1.Consistency_CONSISTENCY_LINEARIZABLE, nil
+	}
+	return 0, status.Error(codes.InvalidArgument, "consistency must be sequential or linearizable")
 }
 
 // httpStatusFromGRPC is the single place where gRPC status codes become HTTP

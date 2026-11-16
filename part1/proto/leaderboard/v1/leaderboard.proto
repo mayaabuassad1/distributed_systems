@@ -28,6 +28,12 @@ service LeaderboardService {
   rpc DeletePlayers(stream DeletePlayersRequest) returns (DeletePlayersResponse);
 }
 
+enum Consistency {
+  CONSISTENCY_UNSPECIFIED = 0; // treated as SEQUENTIAL
+  CONSISTENCY_SEQUENTIAL = 1;
+  CONSISTENCY_LINEARIZABLE = 2;
+}
+
 message Player {
   string id = 1;
   string name = 2;
@@ -50,8 +56,7 @@ message GetPlayersRequest {
     PlayerIdList ids = 2; // multiple player lookup
   }
   int32 limit = 3; // 0 = no limit
-  reserved 4;
-  reserved "consistency";
+  Consistency consistency = 4; // default = SEQUENTIAL
 }
 message PlayerIdList {
   repeated string ids = 1;
@@ -87,6 +92,7 @@ message DeletePlayersRequest {
 }
 message DeletePlayersResponse {
   int32 deleted = 1; // number of players deleted (0 or 1 for single deletion)
+  string node_id = 2; // identifies the gRPC server producing this dummy reply
 }
 
 // ---- Watch (not in Part I) ---------------------------------------------
