@@ -85,9 +85,9 @@ In Part I, the gRPC service is stateless and returns well-formed dummy responses
 
 == Code Organization
 
-The implementation is split across five main files:
+The implementation is split across five main components:
 - `api/openapi.yaml` and `gen/rest/rest.gen.go`: the REST specification and generated `StrictServerInterface` types.
-- `internal/httpapi/handlers.go`: the HTTP handlers that translate REST requests into gRPC calls and map gRPC status errors to HTTP responses in `httpStatusFromGRPC`.
+- `internal/httpapi/handlers.go`: `NewHTTPHandler` for router wiring, `Handlers` for translating REST requests into gRPC calls, `writeProblem` for RFC 9457 error encoding, and `httpStatusFromGRPC` for mapping gRPC status codes to HTTP responses.
 - `proto/leaderboard/v1/leaderboard.proto` and `gen/leaderboard/v1/`: the internal gRPC service definition (`leaderboard.v1`) and generated Go stubs.
 - `internal/grpcsvc/server.go`: the `LeaderboardService` gRPC server, request validation, and dummy responses (which tag `Player.name` with the answering `node_id`).
 - `cmd/server/main.go`: CLI flag parsing (`-id`, `-http`, `-grpc`, `-target`, `-cors-origin`), gRPC client dialing (defaulting `-target` to the local `-grpc` port when unset), gRPC reflection setup, and HTTP/gRPC server startup (including `/openapi.yaml`, `/docs`, and `/editor`).
@@ -151,8 +151,8 @@ In `proto/leaderboard/v1/leaderboard.proto`, every RPC defines its own request a
     [`getPlayer`], [`GetPlayers`], [Server stream], [Sets `select.id`; returns `NOT_FOUND` if missing],
     [`incrementPlayer`], [`IncrementScores`], [Client stream], [Streams 1 item (`id`, `delta = increment`) and unwraps `players[0]`],
     [`incrementPlayers`], [`IncrementScores`], [Client stream], [Streams $N$ items from `updates`; commits on `CloseAndRecv()`],
-    [`deletePlayer`], [`DeletePlayers`], [Client stream], [Streams 1 item with `target.id`; ignores `deleted` count for HTTP `204`],
-    [`clearLeaderboard`], [`DeletePlayers`], [Client stream], [Streams 1 item with `target.all = true`; ignores `deleted` count for HTTP `204`],
+    [`deletePlayer`], [`DeletePlayers`], [Client stream], [Streams 1 item with `target.id`; ignores `deleted` count and `node_id` for HTTP `204`],
+    [`clearLeaderboard`], [`DeletePlayers`], [Client stream], [Streams 1 item with `target.all = true`; ignores `deleted` count and `node_id` for HTTP `204`],
   ),
   caption: [Mapping between REST operations and `LeaderboardService` RPCs.],
 ) <fig-rest-grpc-map>

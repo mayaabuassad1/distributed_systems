@@ -1,4 +1,4 @@
-// Package grpcsvc implements the KVStore gRPC service.
+// Package grpcsvc implements the Leaderboard gRPC service.
 //
 // STEP 4 — In Part I every RPC returns a DUMMY response: the goal is only to
 // prove that the .proto compiles and that two processes can talk over gRPC.
