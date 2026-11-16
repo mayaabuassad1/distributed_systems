@@ -57,7 +57,7 @@ In Part I, the gRPC service is stateless and returns well-formed dummy responses
       column-gutter: 8pt,
       // Row 1: Client -> Server 1
       rect(inset: 8pt, radius: 4pt, fill: luma(245))[Client],
-      [$arrow.r$ #text(size: 8pt)[REST/HTTP]],
+      [$arrow.r$ #text(size: 8pt)[REST/JSON]],
       rect(inset: 8pt, radius: 4pt, stroke: (dash: "dashed", paint: rgb("#4285f4")), fill: rgb("#f8faff"))[
         *Server 1* \
         HTTP Handlers $arrow.r$ gRPC Client \
